@@ -1,0 +1,19 @@
+# STM32 CubeMX build artifacts and temporary files
+
+# Configuration files
+*.ioc
+*.swp
+
+# Build artifacts
+*.o
+*.d
+*.elf
+*.bin
+*.hex
+
+# Temporary files
+*.tmp
+*.log
+*.bak
+*.user
+*.gen
