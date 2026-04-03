@@ -1,0 +1,163 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="utf-8" />
+<title>UART Frequency vs Time Plot (COM7)</title>
+
+<!-- Chart.js -->
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.3.0/dist/chart.umd.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/chartjs-adapter-date-fns@2.0.0/dist/chartjs-adapter-date-fns.bundle.min.js"></script>
+
+<style>
+  body { font-family: Arial; margin: 14px; background: #f2f5fa; }
+  h1 { margin-bottom: 6px; }
+  #controls { margin-bottom: 12px; display:flex; gap:8px; flex-wrap:wrap; }
+  button { padding: 8px 12px; cursor:pointer; }
+  #status { font-size:13px; }
+  #chartWrap { width: 96%; max-width:1100px; margin-top:10px; }
+  canvas { background:#fff; border:1px solid #ccc; border-radius:6px; }
+
+  /* --- BIG NUMBER DISPLAY --- */
+  #freqDisplayBox {
+      margin-top: 20px;
+      width: 100%;
+      text-align: center;
+      font-size: 42px;
+      font-weight: bold;
+      padding: 12px 0;
+      background: #ffffff;
+      border: 2px solid #d0d0d0;
+      border-radius: 10px;
+      color: #0044aa;
+      box-shadow: 0 0 8px rgba(0,0,0,0.1);
+  }
+</style>
+</head>
+
+<body>
+
+<h1>STM32 UART Frequency → Time Plot</h1>
+
+<div id="controls">
+  <button id="connectBtn">Connect</button>
+  <button id="disconnectBtn" disabled>Disconnect</button>
+  <button id="pauseBtn" disabled>Pause</button>
+  <button id="exportBtn" disabled>Export CSV</button>
+
+  <label for="baud">Baud:</label>
+  <select id="baud">
+    <option>9600</option>
+    <option selected>115200</option>
+    <option>230400</option>
+  </select>
+
+  <div id="status">Status: <strong>Disconnected</strong></div>
+</div>
+
+<div id="chartWrap">
+  <canvas id="freqChart" height="260"></canvas>
+</div>
+
+<!-- ------------------- BIG FREQUENCY DISPLAY ------------------- -->
+<div id="freqDisplayBox">
+  Frequency: --.- Hz
+</div>
+
+<script>
+const WINDOW_MS = 60000;
+let port = null, reader = null, keepReading = false, paused = false;
+
+const freqText = document.getElementById("freqDisplayBox");
+
+/* ----------------- CHART SETUP ----------------- */
+const ctx = document.getElementById('freqChart').getContext('2d');
+const data = { datasets: [{ label:"Frequency", data:[], parsing:false, borderWidth:2, pointRadius:2 }] };
+
+const freqChart = new Chart(ctx, {
+  type:'line',
+  data:data,
+  options:{
+    animation:false,
+    responsive:true,
+    scales:{
+      x:{ type:'time', time:{unit:'second'} },
+      y:{ beginAtZero:true, title:{display:true, text:'Frequency (Hz)'} }
+    }
+  }
+});
+
+function setStatus(msg, color) {
+  document.getElementById('status').innerHTML =
+      "Status: <strong style='color:"+(color||"black")+"'>"+msg+"</strong>";
+}
+
+function updateFrequencyDisplay(freq) {
+    freqText.textContent = "Frequency: " + freq.toFixed(2) + " Hz";
+}
+
+function appendPoint(freq) {
+    const t = Date.now();
+    data.datasets[0].data.push({x:t, y:freq});
+    const oldest = Date.now() - WINDOW_MS;
+    data.datasets[0].data = data.datasets[0].data.filter(p=>p.x>=oldest);
+    freqChart.update('none');
+}
+
+/* ----------------- SERIAL READ LOOP ----------------- */
+async function startReading() {
+    keepReading = true;
+    paused = false;
+    reader = port.readable.getReader();
+
+    let buffer = "";
+    while (keepReading) {
+        const {value, done} = await reader.read();
+        if (done) break;
+        buffer += new TextDecoder().decode(value);
+
+        let idx;
+        while ((idx = buffer.indexOf("\n")) >= 0) {
+            const line = buffer.slice(0, idx).trim();
+            buffer = buffer.slice(idx+1);
+
+            let match = line.match(/(-?\d+(\.\d+)?)/);
+            if (match) {
+                let freq = parseFloat(match[0]);
+                if (!paused) {
+                    appendPoint(freq);
+                    updateFrequencyDisplay(freq);   // <-- update big display
+                }
+            }
+        }
+    }
+}
+document.getElementById('connectBtn').onclick = async () => {
+    try {
+        port = await navigator.serial.requestPort();
+        await port.open({ baudRate: parseInt(document.getElementById('baud').value) });
+
+        setStatus("Connected", "green");
+        document.getElementById('disconnectBtn').disabled = false;
+        document.getElementById('pauseBtn').disabled = false;
+
+        startReading();
+    } catch(e) {
+        setStatus("Error: " + e, "red");
+    }
+};
+
+document.getElementById('disconnectBtn').onclick = async () => {
+    keepReading = false;
+    if (reader) await reader.cancel();
+    if (port) await port.close();
+    setStatus("Disconnected");
+};
+
+document.getElementById('pauseBtn').onclick = () => {
+    paused = !paused;
+    document.getElementById('pauseBtn').textContent = paused ? "Resume" : "Pause";
+};
+</script>
+
+</body>
+</html>
